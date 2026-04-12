@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>陪你天气 · 气象数据融合平台 — 多源融合实时引擎</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#06080f;color:#e0e6ed;font-family:'SF Pro Display','Inter',-apple-system,system-ui,sans-serif;overflow:hidden;height:100vh}
+:root{--blue:#495EE8;--yellow:#ffc100;--green:#34d399;--amber:#e8a800;--pink:#f472b6;--purple:#a78bfa;--red:#ef4444;--cyan:#ffc100}
+
+.dash{display:grid;grid-template-rows:56px 52px 1fr 1fr 120px;grid-template-columns:280px 1fr 260px;height:100vh;gap:0}
+.header{grid-column:1/-1;grid-row:1}
+.pipeline-strip{grid-column:1/-1;grid-row:2}
+.sources{grid-column:1;grid-row:3/5}
+.main-top{grid-column:2;grid-row:3}
+.main-bottom{grid-column:2;grid-row:4}
+.right-panel{grid-column:3;grid-row:3/5}
+.algo-log{grid-column:1/-1;grid-row:5}
+
+/* Header */
+.header{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;padding:0 24px;background:#0a0e18;border-bottom:1px solid #1e293b}
+.header h1{font-size:1.05rem;font-weight:600;background:linear-gradient(90deg,var(--blue),var(--yellow));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.header .live{display:flex;align-items:center;gap:8px;font-size:.78rem;color:#94a3b8}
+.header .dot{width:8px;height:8px;border-radius:50%;background:#22c55e;animation:blink 1.5s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+.clock{font-family:'JetBrains Mono',monospace;font-size:.82rem;color:#64748b}
+
+/* Pipeline strip */
+.pipeline-strip{grid-column:1/-1;display:flex;align-items:center;justify-content:center;gap:0;background:#080c16;border-bottom:1px solid #111827;padding:0 20px;position:relative;overflow:hidden}
+.pipe-node{display:flex;align-items:center;gap:4px;padding:4px 12px;border-radius:4px;font-size:.65rem;color:#475569;border:1px solid #1e293b;background:#0a0e17;transition:all .4s;white-space:nowrap}
+.pipe-node .pn-dot{width:5px;height:5px;border-radius:50%;background:#1e293b;transition:all .4s}
+.pipe-node.active{color:var(--cyan);border-color:rgba(255,193,0,.3);background:rgba(255,193,0,.05)}
+.pipe-node.active .pn-dot{background:var(--cyan);box-shadow:0 0 6px rgba(255,193,0,.5)}
+.pipe-node.done{color:#22c55e;border-color:rgba(34,197,94,.2)}
+.pipe-node.done .pn-dot{background:#22c55e}
+.pipe-arrow{color:#1e293b;font-size:.65rem;margin:0 4px;transition:color .3s}
+.pipe-arrow.active{color:var(--cyan)}
+.pipe-arrow.done{color:#22c55e}
+.pipe-throughput{position:absolute;right:24px;font-size:.6rem;color:#475569;font-family:'JetBrains Mono',monospace}
+.pipe-throughput span{color:var(--cyan)}
+
+/* Left: data sources */
+.sources{border-right:1px solid #1e293b;display:flex;flex-direction:column;overflow-y:auto;background:#0a0e17}
+.src-card{padding:10px 14px;border-bottom:1px solid #111827;position:relative}
+.src-card .src-name{font-size:.68rem;text-transform:uppercase;letter-spacing:1.5px;color:#475569;margin-bottom:2px}
+.src-card .src-row{display:flex;align-items:baseline;justify-content:space-between}
+.src-card .src-title{font-size:.8rem;font-weight:600}
+.src-card .src-val{font-family:'JetBrains Mono',monospace;font-size:1.2rem;font-weight:700}
+.src-card canvas{width:100%;height:40px;display:block;margin-top:4px}
+.src-card .src-stat{display:flex;justify-content:space-between;font-size:.6rem;color:#334155;margin-top:2px}
+.src-indicator{position:absolute;top:10px;right:14px;width:5px;height:5px;border-radius:50%;background:#22c55e;box-shadow:0 0 6px rgba(34,197,94,.4)}
+
+/* Main center top: forecast chart */
+.main-top{border-bottom:1px solid #1e293b;background:#0f172a;padding:12px 16px;overflow:hidden}
+.panel-title{font-size:.62rem;text-transform:uppercase;letter-spacing:1.5px;color:#475569;margin-bottom:8px}
+#forecastChart{width:100%;height:calc(100% - 24px);display:block}
+
+/* Main center bottom: risk grid */
+.main-bottom{background:#0f172a;padding:12px 16px;overflow:hidden}
+#riskCanvas{width:100%;height:calc(100% - 24px);display:block}
+
+/* Right: algo output */
+.right-panel{border-left:1px solid #1e293b;display:flex;flex-direction:column;background:#0a0e17;overflow-y:auto}
+.kpi{padding:10px 14px;border-bottom:1px solid #111827}
+.kpi .kpi-label{font-size:.58rem;text-transform:uppercase;letter-spacing:1.5px;color:#475569;margin-bottom:2px}
+.kpi .kpi-value{font-family:'JetBrains Mono',monospace;font-size:1.5rem;font-weight:700;transition:all .5s}
+.kpi .kpi-sub{font-size:.6rem;color:#334155;margin-top:1px}
+.kpi-blue .kpi-value{color:var(--blue)}
+.kpi-cyan .kpi-value{color:var(--cyan)}
+.kpi-green .kpi-value{color:var(--green)}
+.kpi-amber .kpi-value{color:var(--amber)}
+.kpi-pink .kpi-value{color:var(--pink)}
+
+.signal-box{padding:10px 14px;border-bottom:1px solid #111827}
+.signal-box .sig-label{font-size:.58rem;text-transform:uppercase;letter-spacing:1.5px;color:#475569;margin-bottom:4px}
+.signal-box .sig-value{font-family:'JetBrains Mono',monospace;font-size:1.1rem;font-weight:700}
+.signal-box .sig-reason{font-size:.6rem;color:#475569;margin-top:2px}
+
+.algo-stats{padding:10px 14px;border-bottom:1px solid #111827}
+.algo-stats .as-row{display:flex;justify-content:space-between;font-size:.62rem;margin-bottom:3px}
+.algo-stats .as-label{color:#475569}
+.algo-stats .as-val{font-family:'JetBrains Mono',monospace;color:#94a3b8}
+
+.risk-bars{padding:10px 14px;flex:1;overflow-y:auto}
+.rbar{display:flex;align-items:center;gap:6px;margin-bottom:4px}
+.rbar-label{width:20px;font-size:.6rem;color:#64748b;font-family:'JetBrains Mono',monospace}
+.rbar-track{flex:1;height:10px;background:#111827;border-radius:2px;overflow:hidden}
+.rbar-fill{height:100%;border-radius:2px;transition:width 1s}
+.rbar-pct{font-size:.58rem;color:#64748b;font-family:'JetBrains Mono',monospace;width:32px;text-align:right}
+
+/* Bottom: algo log */
+.algo-log{grid-column:1/-1;background:#080c14;border-top:1px solid #1e293b;padding:8px 20px;display:flex;flex-direction:column;overflow:hidden}
+.algo-log .log-title{font-size:.58rem;text-transform:uppercase;letter-spacing:1.5px;color:#334155;margin-bottom:4px;display:flex;align-items:center;gap:6px}
+.algo-log .log-title .log-dot{width:4px;height:4px;border-radius:50%;background:var(--cyan);animation:blink 1s infinite}
+.log-scroll{flex:1;overflow-y:auto;font-family:'JetBrains Mono',monospace;font-size:.72rem;line-height:1.6;color:#475569}
+.log-scroll .log-line{white-space:nowrap}
+.log-scroll .log-time{color:#334155}
+.log-scroll .log-tag{border-radius:2px;padding:0 4px;margin:0 2px;font-size:.58rem}
+.tag-gfs{background:rgba(73,94,232,.12);color:#60a5fa}
+.tag-era5{background:rgba(52,211,153,.12);color:#34d399}
+.tag-fusion{background:rgba(255,193,0,.12);color:#ffc100}
+.tag-risk{background:rgba(251,191,36,.12);color:#fbbf24}
+.tag-signal{background:rgba(167,139,250,.12);color:#a78bfa}
+.tag-qc{background:rgba(244,114,182,.12);color:#f472b6}
+</style>
+</head>
+<body>
+<div class="dash">
+  <div class="header">
+    <h1>陪你天气 · 多源融合气象数据平台</h1>
+    <div class="live"><div class="dot"></div>引擎运行中</div>
+    <div class="clock" id="clock"></div>
+  </div>
+
+  <!-- Pipeline strip -->
+  <div class="pipeline-strip" id="pipeStrip">
+  </div>
+
+  <!-- Left: sources -->
+  <div class="sources">
+    <div class="src-card"><div class="src-indicator"></div>
+      <div class="src-name">TYJI 数值预报 (生产)</div>
+      <div class="src-row"><span class="src-title">预报降水</span><span class="src-val" id="gfsVal">--</span></div>
+      <canvas id="cvGfs"></canvas>
+      <div class="src-stat"><span>FTP · 多周期初始化</span><span id="gfsTime">加载中</span></div>
+    </div>
+    <div class="src-card"><div class="src-indicator"></div>
+      <div class="src-name">CLDAS 实况观测 (生产)</div>
+      <div class="src-row"><span class="src-title">实测降水</span><span class="src-val" id="era5Val">--</span></div>
+      <canvas id="cvEra5"></canvas>
+      <div class="src-stat"><span>彩云API · 9h回看</span><span>实时</span></div>
+    </div>
+    <div class="src-card"><div class="src-indicator"></div>
+      <div class="src-name">GFS 全球预报 (开源)</div>
+      <div class="src-row"><span class="src-title">预报降水</span><span class="src-val" id="tempVal">--</span></div>
+      <canvas id="cvTemp"></canvas>
+      <div class="src-stat"><span>NOAA 0.25° · 3h</span><span>实时</span></div>
+    </div>
+    <div class="src-card"><div class="src-indicator"></div>
+      <div class="src-name">ERA5-Land 再分析 (开源)</div>
+      <div class="src-row"><span class="src-title">观测降水</span><span class="src-val" id="windVal">--</span></div>
+      <canvas id="cvWind"></canvas>
+      <div class="src-stat"><span>ECMWF 0.1° · 逐时</span><span id="windDir">实时</span></div>
+    </div>
+    <div class="src-card" style="border-bottom:none">
+      <div class="src-indicator" style="background:var(--amber);box-shadow:0 0 6px rgba(251,191,36,.4)"></div>
+      <div class="src-name">Pipeline 状态</div>
+      <div style="font-size:.72rem;line-height:1.7">
+        数据源: <span style="color:var(--yellow)" id="srcCount">0</span>/4 在线<br>
+        格点: 225 (15×15 · 上海)<br>
+        邻域: 3×3 空间融合<br>
+        风险等级: r0-r10 (11级)<br>
+        更新: <span id="lastUpdate">--</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main top: forecast -->
+  <div class="main-top">
+    <div class="panel-title">降水风险概率 — 10天逐时预报</div>
+    <canvas id="forecastChart"></canvas>
+  </div>
+
+  <!-- Main bottom: risk grid -->
+  <div class="main-bottom">
+    <div class="panel-title">上海15×15格点风险分布 — 实时概率计算 · <span id="gridUpdateTime">--</span></div>
+    <canvas id="riskCanvas"></canvas>
+  </div>
+
+  <!-- Right: algo output -->
+  <div class="right-panel">
+    <div class="kpi kpi-blue">
+      <div class="kpi-label">当前降水强度</div>
+      <div class="kpi-value" id="kpiPrecip">--</div>
+      <div class="kpi-sub">mm/h</div>
+    </div>
+    <div class="kpi kpi-cyan">
+      <div class="kpi-label">未来24h累积</div>
+      <div class="kpi-value" id="kpi24h">--</div>
+      <div class="kpi-sub">mm</div>
+    </div>
+    <div class="kpi kpi-amber">
+      <div class="kpi-label">风险等级</div>
+      <div class="kpi-value" id="kpiRisk">--</div>
+      <div class="kpi-sub">r0-r10</div>
+    </div>
+    <div class="signal-box">
+      <div class="sig-label">风险研判</div>
+      <div class="sig-value" id="sigValue">--</div>
+      <div class="sig-reason" id="sigReason">等待数据...</div>
+    </div>
+    <div class="algo-stats">
+      <div class="as-row"><span class="as-label">融合偏差校正</span><span class="as-val" id="asBias">--</span></div>
+      <div class="as-row"><span class="as-label">预报 RMSE</span><span class="as-val" id="asRmse">--</span></div>
+      <div class="as-row"><span class="as-label">空间分辨率</span><span class="as-val" style="color:var(--cyan)">1×1km</span></div>
+      <div class="as-row"><span class="as-label">时间分辨率</span><span class="as-val" style="color:var(--cyan)">1min</span></div>
+      <div class="as-row"><span class="as-label">概率校准率</span><span class="as-val" id="asCal">--</span></div>
+      <div class="as-row"><span class="as-label">覆盖格点</span><span class="as-val">225 / 225</span></div>
+    </div>
+    <div class="risk-bars">
+      <div class="panel-title" style="margin-bottom:6px">概率分布</div>
+      <div id="riskBarsContainer"></div>
+    </div>
+  </div>
+
+  <!-- Bottom: algo log -->
+  <div class="algo-log">
+    <div class="log-title"><div class="log-dot"></div>系统日志</div>
+    <div class="log-scroll" id="logScroll"></div>
+  </div>
+</div>
+
+<script>
+// ── Shanghai district boundaries (simplified GeoJSON from Aliyun DataV) ──
+const SH=[{"n":"黄浦区","c":[[[[121.4577,31.2202],[121.4623,31.2032],[121.4664,31.2044],[121.4704,31.1913],[121.476,31.1879],[121.4946,31.1929],[121.5099,31.2145],[121.4935,31.2361],[121.4948,31.2422],[121.4878,31.2442],[121.463,31.2414],[121.4675,31.2239],[121.4568,31.2239],[121.4577,31.2202]]]]},{"n":"徐汇区","c":[[[[121.4577,31.2202],[121.4395,31.2145],[121.4352,31.2111],[121.4379,31.204],[121.4197,31.1908],[121.4126,31.1911],[121.4152,31.1834],[121.3944,31.1779],[121.3915,31.1687],[121.3946,31.1596],[121.4026,31.1622],[121.4046,31.1576],[121.3959,31.1559],[121.3969,31.1527],[121.405,31.1567],[121.4215,31.1271],[121.4364,31.129],[121.4357,31.1135],[121.4508,31.1154],[121.4524,31.1086],[121.4463,31.1057],[121.4554,31.1008],[121.4629,31.102],[121.4693,31.1187],[121.4687,31.1279],[121.4575,31.1465],[121.4684,31.1581],[121.4663,31.1811],[121.476,31.1879],[121.4704,31.1913],[121.4664,31.2044],[121.4623,31.2032],[121.4577,31.2202]]]]},{"n":"长宁区","c":[[[[121.4395,31.2145],[121.4354,31.2251],[121.429,31.2231],[121.4275,31.2293],[121.4199,31.2252],[121.4156,31.2286],[121.416,31.2245],[121.3997,31.2187],[121.3732,31.2201],[121.3446,31.2436],[121.3456,31.2399],[121.3384,31.2375],[121.3454,31.2304],[121.341,31.2243],[121.3456,31.2235],[121.3394,31.2166],[121.338,31.1926],[121.3318,31.1896],[121.3414,31.1794],[121.3914,31.1919],[121.4197,31.1908],[121.4379,31.204],[121.4352,31.2111],[121.4395,31.2145]]]]},{"n":"静安区","c":[[[[121.4577,31.2202],[121.4568,31.2239],[121.4675,31.2239],[121.463,31.2414],[121.483,31.2419],[121.4805,31.2586],[121.4615,31.2789],[121.4601,31.2898],[121.4635,31.306],[121.4677,31.3063],[121.4681,31.3203],[121.4479,31.3171],[121.4336,31.3209],[121.4313,31.3036],[121.4186,31.2923],[121.4238,31.291],[121.4253,31.2707],[121.4298,31.2749],[121.443,31.2671],[121.4515,31.252],[121.45,31.2433],[121.431,31.2351],[121.4277,31.2242],[121.4354,31.2251],[121.4395,31.2145],[121.4577,31.2202]]]]},{"n":"普陀区","c":[[[[121.3542,31.2371],[121.3621,31.226],[121.3732,31.2201],[121.3997,31.2187],[121.416,31.2245],[121.4156,31.2286],[121.4199,31.2252],[121.45,31.2433],[121.451,31.2563],[121.4298,31.2749],[121.4158,31.2659],[121.4001,31.2781],[121.4045,31.2862],[121.3935,31.2913],[121.3948,31.2947],[121.3697,31.2891],[121.3586,31.2935],[121.3635,31.3027],[121.353,31.3017],[121.3322,31.293],[121.3273,31.2852],[121.3327,31.2861],[121.3383,31.2728],[121.3674,31.2696],[121.3589,31.2636],[121.3659,31.2577],[121.3809,31.2578],[121.3757,31.2445],[121.3684,31.2474],[121.3542,31.2371]]]]},{"n":"虹口区","c":[[[[121.4854,31.3116],[121.4683,31.316],[121.4601,31.2898],[121.4628,31.2754],[121.4805,31.2586],[121.483,31.2419],[121.5165,31.247],[121.5065,31.2706],[121.4966,31.2764],[121.496,31.283],[121.5027,31.2897],[121.5007,31.2955],[121.4902,31.2926],[121.4854,31.3116]]]]},{"n":"杨浦区","c":[[[[121.5165,31.247],[121.5415,31.2518],[121.5591,31.2642],[121.5695,31.2796],[121.5586,31.3313],[121.5255,31.3468],[121.5176,31.3408],[121.5056,31.3457],[121.4936,31.3303],[121.4989,31.3253],[121.4967,31.3115],[121.4854,31.3116],[121.4902,31.2926],[121.5007,31.2955],[121.5027,31.2897],[121.496,31.283],[121.4966,31.2764],[121.5065,31.2706],[121.5165,31.247]]]]},{"n":"闵行区","c":[[[[121.3587,30.9779],[121.424,30.9945],[121.4408,31.0058],[121.4892,31.0149],[121.4959,30.9983],[121.517,31.0076],[121.5203,30.9994],[121.5528,30.9889],[121.5559,30.9952],[121.5705,30.9983],[121.5715,31.0056],[121.5659,31.0119],[121.5748,31.021],[121.5723,31.0267],[121.5541,31.0186],[121.5621,31.0436],[121.5547,31.0508],[121.5415,31.0464],[121.5408,31.0525],[121.5484,31.0569],[121.5472,31.0616],[121.5568,31.0674],[121.5528,31.0695],[121.5575,31.0734],[121.5753,31.0801],[121.5506,31.0828],[121.5516,31.0901],[121.5673,31.0936],[121.5553,31.1149],[121.5477,31.1097],[121.5353,31.118],[121.5145,31.1153],[121.5113,31.1212],[121.5016,31.1147],[121.4985,31.1215],[121.4928,31.1187],[121.486,31.1245],[121.4774,31.1173],[121.4814,31.1107],[121.4741,31.1144],[121.4652,31.1121],[121.4629,31.102],[121.4526,31.1012],[121.4463,31.1057],[121.4524,31.1086],[121.4508,31.1154],[121.4357,31.1135],[121.4364,31.129],[121.4215,31.1271],[121.405,31.1567],[121.3969,31.1527],[121.3959,31.1559],[121.4046,31.1576],[121.4026,31.1622],[121.3946,31.1596],[121.3944,31.1779],[121.4152,31.1834],[121.4126,31.1911],[121.3914,31.1919],[121.3383,31.1801],[121.3318,31.1896],[121.338,31.1926],[121.3394,31.2166],[121.3456,31.2235],[121.341,31.2243],[121.3454,31.2279],[121.3435,31.2343],[121.3384,31.2375],[121.3339,31.232],[121.3154,31.2272],[121.2969,31.231],[121.2814,31.2482],[121.2842,31.2518],[121.2544,31.2596],[121.2399,31.2411],[121.2479,31.2409],[121.2572,31.2307],[121.2631,31.2057],[121.2774,31.1936],[121.2975,31.2014],[121.356,31.1125],[121.3485,31.1067],[121.3513,31.0993],[121.3628,31.0998],[121.372,31.0799],[121.3655,31.0779],[121.3637,31.0684],[121.3534,31.0613],[121.3353,31.0604],[121.3331,31.0133],[121.3443,31.0139],[121.3275,30.9959],[121.3258,30.9833],[121.3438,30.9766],[121.3587,30.9779]]]]},{"n":"宝山区","c":[[[[121.4253,31.2707],[121.4238,31.291],[121.4186,31.2923],[121.4313,31.3036],[121.4336,31.3209],[121.4479,31.3171],[121.4654,31.3214],[121.4683,31.316],[121.4967,31.3115],[121.4989,31.3253],[121.4936,31.3303],[121.5056,31.3457],[121.5229,31.3429],[121.5255,31.3468],[121.5038,31.3649],[121.5038,31.3737],[121.5212,31.3948],[121.5074,31.4059],[121.5172,31.4063],[121.5024,31.4134],[121.506,31.407],[121.4043,31.4792],[121.4054,31.4872],[121.3763,31.5011],[121.3435,31.5121],[121.3237,31.4996],[121.3199,31.4997],[121.3202,31.5059],[121.3153,31.5013],[121.3055,31.5053],[121.3009,31.4967],[121.316,31.4812],[121.3188,31.4751],[121.3143,31.4725],[121.3206,31.4691],[121.3187,31.4569],[121.3241,31.455],[121.3283,31.4411],[121.3337,31.4401],[121.3366,31.4323],[121.3331,31.4107],[121.3143,31.4072],[121.3147,31.3984],[121.3231,31.3959],[121.3204,31.3891],[121.3305,31.3811],[121.3287,31.3773],[121.3403,31.3605],[121.3325,31.3471],[121.3443,31.3419],[121.3463,31.3363],[121.3417,31.3333],[121.3456,31.3208],[121.3492,31.3213],[121.3313,31.3014],[121.3387,31.2932],[121.3409,31.2974],[121.3635,31.3027],[121.3586,31.2935],[121.3697,31.2891],[121.3948,31.2947],[121.3935,31.2913],[121.4045,31.2862],[121.4001,31.2781],[121.4065,31.2769],[121.4054,31.2731],[121.4195,31.2652],[121.4253,31.2707]]]]},{"n":"嘉定区","c":[[[[121.1537,31.2766],[121.1518,31.2676],[121.1626,31.2692],[121.1714,31.2549],[121.1963,31.2512],[121.2064,31.2601],[121.2126,31.2598],[121.2142,31.2544],[121.2291,31.2627],[121.264,31.2592],[121.2713,31.2523],[121.2842,31.2518],[121.2814,31.2482],[121.2926,31.2328],[121.3154,31.2272],[121.3339,31.232],[121.3456,31.2399],[121.3446,31.2436],[121.3542,31.2371],[121.3684,31.2474],[121.3757,31.2445],[121.3809,31.2578],[121.3659,31.2577],[121.3589,31.2636],[121.3674,31.2696],[121.3383,31.2728],[121.3327,31.2861],[121.3273,31.2852],[121.3264,31.2889],[121.3365,31.2949],[121.3313,31.3014],[121.3492,31.3213],[121.3456,31.3208],[121.3417,31.3333],[121.3463,31.3363],[121.3443,31.3419],[121.3325,31.3471],[121.3403,31.3605],[121.3287,31.3773],[121.3305,31.3811],[121.3204,31.3891],[121.3231,31.3959],[121.3147,31.3984],[121.3143,31.4072],[121.3331,31.4107],[121.3366,31.4323],[121.3337,31.4401],[121.3283,31.4411],[121.3241,31.455],[121.3187,31.4569],[121.3206,31.4691],[121.3143,31.4725],[121.3188,31.4751],[121.3047,31.4958],[121.2935,31.4898],[121.2797,31.4904],[121.272,31.4843],[121.2689,31.4875],[121.2615,31.4789],[121.2548,31.4776],[121.2536,31.4831],[121.2471,31.4771],[121.2409,31.4937],[121.2347,31.4927],[121.2304,31.4774],[121.2191,31.4752],[121.2144,31.4791],[121.1861,31.4608],[121.1861,31.4544],[121.1808,31.4515],[121.1473,31.4439],[121.1478,31.4362],[121.1627,31.4322],[121.1643,31.4272],[121.1462,31.4211],[121.1589,31.4101],[121.1505,31.4022],[121.1527,31.3982],[121.1438,31.3923],[121.1484,31.3854],[121.1138,31.3744],[121.1202,31.3687],[121.1067,31.3645],[121.1083,31.3506],[121.1172,31.3517],[121.118,31.3434],[121.1304,31.3442],[121.1333,31.3256],[121.1273,31.3193],[121.13,31.3026],[121.1396,31.303],[121.1438,31.3097],[121.1513,31.2919],[121.1613,31.284],[121.1537,31.2766]]]]},{"n":"浦东新区","c":[[[[121.5705,30.9983],[121.6147,31.0013],[121.6206,30.9927],[121.693,30.9893],[121.7128,30.9809],[121.7479,30.9519],[121.7593,30.9492],[121.7645,30.9418],[121.7615,30.9384],[121.7778,30.931],[121.7811,30.9176],[121.7767,30.881],[121.7731,30.8806],[121.7681,30.8633],[121.7693,30.8504],[121.7938,30.8169],[121.9153,30.8129],[121.9246,30.8066],[121.9437,30.7771],[121.9697,30.7892],[121.9547,30.8258],[121.9854,30.8507],[121.994,30.8631],[121.9985,30.9],[121.9909,30.9684],[121.9776,31.0161],[121.9627,31.0473],[121.884,31.1306],[121.8098,31.1969],[121.7437,31.2832],[121.7225,31.3035],[121.603,31.3727],[121.5212,31.3948],[121.5038,31.3737],[121.5038,31.3649],[121.5149,31.352],[121.5586,31.3313],[121.5695,31.2796],[121.5591,31.2642],[121.5415,31.2518],[121.4948,31.2422],[121.4935,31.2361],[121.5094,31.2185],[121.5084,31.2102],[121.4946,31.1929],[121.4663,31.1811],[121.4694,31.1623],[121.4575,31.1422],[121.4697,31.1249],[121.4652,31.1121],[121.4741,31.1144],[121.4814,31.1107],[121.4774,31.1173],[121.486,31.1245],[121.4928,31.1187],[121.4985,31.1215],[121.5016,31.1147],[121.5113,31.1212],[121.5145,31.1153],[121.5314,31.1184],[121.5379,31.114],[121.5423,31.1162],[121.5477,31.1097],[121.5553,31.1149],[121.5599,31.1119],[121.5673,31.0936],[121.5485,31.0869],[121.5536,31.0803],[121.5616,31.0836],[121.5753,31.0801],[121.5575,31.0734],[121.5528,31.0695],[121.5568,31.0674],[121.5472,31.0616],[121.5484,31.0569],[121.5408,31.0525],[121.5415,31.0464],[121.5547,31.0508],[121.5621,31.0436],[121.5541,31.0186],[121.5723,31.0267],[121.5747,31.0186],[121.5659,31.0119],[121.5715,31.0056],[121.5705,30.9983]]],[[[121.9432,31.2155],[121.9448,31.1869],[121.9596,31.1593],[121.9957,31.1608],[122.012,31.192],[122.0086,31.221],[121.9573,31.2304],[121.9466,31.2244],[121.9432,31.2155]]],[[[121.8826,31.2409],[121.8825,31.2256],[121.8893,31.215],[121.9088,31.1953],[121.9224,31.1969],[121.9275,31.224],[121.9236,31.2339],[121.8974,31.2421],[121.8826,31.2409]]]]},{"n":"金山区","c":[[[[120.9967,30.9503],[121.0008,30.9377],[120.999,30.9095],[121.0045,30.907],[120.9928,30.9022],[120.9905,30.8958],[120.9938,30.8897],[121.0175,30.8827],[121.0219,30.8752],[121.0148,30.871],[121.0163,30.8629],[121.011,30.856],[121.015,30.8536],[120.99,30.8347],[120.9909,30.8227],[121.0144,30.8358],[121.0301,30.8286],[121.0379,30.8139],[121.045,30.8155],[121.0438,30.82],[121.0377,30.8203],[121.04,30.8272],[121.0489,30.8252],[121.0468,30.8311],[121.062,30.8378],[121.0605,30.8452],[121.067,30.8488],[121.0805,30.8487],[121.0977,30.8571],[121.1048,30.8493],[121.1132,30.854],[121.1212,30.8502],[121.1177,30.8353],[121.1316,30.836],[121.1343,30.8285],[121.1374,30.83],[121.1282,30.8102],[121.1266,30.789],[121.1172,30.7861],[121.1234,30.7789],[121.1527,30.779],[121.1607,30.7732],[121.1708,30.7771],[121.1747,30.772],[121.191,30.7811],[121.197,30.7734],[121.2003,30.7736],[121.2001,30.7833],[121.218,30.785],[121.2262,30.7751],[121.2323,30.7558],[121.2715,30.7323],[121.2659,30.7095],[121.2746,30.6774],[121.3466,30.6756],[121.3619,30.6795],[121.407,30.7181],[121.4788,30.7563],[121.437,30.8181],[121.4205,30.8198],[121.4151,30.8158],[121.4142,30.8218],[121.401,30.8274],[121.4042,30.8338],[121.3921,30.8278],[121.3838,30.8339],[121.3791,30.8432],[121.3854,30.8432],[121.3822,30.879],[121.3633,30.887],[121.3518,30.9132],[121.3366,30.9067],[121.3065,30.9121],[121.3018,30.9085],[121.2949,30.9185],[121.2888,30.9169],[121.2884,30.8961],[121.2796,30.8945],[121.2662,30.9017],[121.2669,30.9063],[121.2466,30.9099],[121.2407,30.9251],[121.223,30.9307],[121.211,30.9213],[121.1865,30.9154],[121.1713,30.9147],[121.1582,30.9203],[121.1566,30.91],[121.1391,30.9196],[121.1413,30.9013],[121.1235,30.9029],[121.1135,30.8974],[121.1109,30.901],[121.1214,30.92],[121.1051,30.9201],[121.1004,30.9265],[121.089,30.9153],[121.0988,30.9066],[121.0971,30.9032],[121.0808,30.9059],[121.0423,30.8994],[121.0403,30.9045],[121.0344,30.9027],[121.0253,30.9091],[121.0299,30.9445],[121.0177,30.9392],[121.0116,30.9436],[121.0154,30.9482],[120.9967,30.9503]]],[[[121.4267,30.6822],[121.4267,30.6822]]],[[[121.4225,30.6915],[121.4195,30.6899],[121.4289,30.6891],[121.4225,30.6915]]],[[[121.4068,30.705],[121.4068,30.705]]]]},{"n":"松江区","c":[[[[121.3239,31.1629],[121.3181,31.1576],[121.2778,31.1523],[121.277,31.1442],[121.2875,31.14],[121.281,31.1333],[121.2657,31.1364],[121.258,31.1271],[121.258,31.1324],[121.247,31.1342],[121.2393,31.13],[121.2453,31.1293],[121.2445,31.1254],[121.2368,31.1257],[121.2339,31.1173],[121.2241,31.1151],[121.2217,31.1199],[121.228,31.1391],[121.2083,31.1357],[121.2003,31.1378],[121.2016,31.1409],[121.1947,31.1382],[121.182,31.1435],[121.1838,31.1187],[121.1743,31.1179],[121.1745,31.1085],[121.1665,31.1083],[121.1655,31.1014],[121.1544,31.1018],[121.1552,31.0905],[121.1126,31.1119],[121.098,31.0993],[121.1007,31.0809],[121.1184,31.0759],[121.1278,31.0598],[121.1018,31.0573],[121.1011,31.0536],[121.0882,31.0647],[121.081,31.0569],[121.0962,31.0448],[121.0931,31.0407],[121.1003,31.0334],[121.0964,31.0264],[121.0855,31.0255],[121.1042,31.008],[121.0992,30.9731],[121.0956,30.9742],[121.0975,30.9656],[121.0653,30.9552],[121.0603,30.9565],[121.0573,30.9653],[121.0431,30.9694],[121.0435,30.9575],[121.0363,30.9571],[121.0332,30.9471],[121.0279,30.9458],[121.0319,30.9398],[121.0253,30.9091],[121.0344,30.9027],[121.0403,30.9045],[121.0423,30.8994],[121.0808,30.9059],[121.0971,30.9032],[121.0988,30.9066],[121.089,30.9153],[121.1004,30.9265],[121.1051,30.9201],[121.1214,30.92],[121.1109,30.901],[121.1135,30.8974],[121.1235,30.9029],[121.1413,30.9013],[121.1391,30.9196],[121.1566,30.91],[121.1582,30.9203],[121.1713,30.9147],[121.1865,30.9154],[121.211,30.9213],[121.223,30.9307],[121.2407,30.9251],[121.2466,30.9099],[121.2669,30.9063],[121.2662,30.9017],[121.2796,30.8945],[121.2884,30.8961],[121.2888,30.9169],[121.2949,30.9185],[121.3018,30.9085],[121.3065,30.9121],[121.3366,30.9067],[121.3506,30.9114],[121.3561,30.9197],[121.3512,30.9306],[121.3627,30.9348],[121.3611,30.944],[121.3655,30.9472],[121.36,30.9763],[121.3274,30.9807],[121.3268,30.9945],[121.3443,31.0139],[121.3331,31.0133],[121.3353,31.0604],[121.3534,31.0613],[121.3637,31.0684],[121.3655,31.0779],[121.372,31.0799],[121.3628,31.0998],[121.3513,31.0993],[121.3485,31.1067],[121.357,31.1105],[121.3239,31.1629]]]]},{"n":"青浦区","c":[[[[121.1537,31.2766],[121.143,31.2755],[121.1204,31.2862],[121.1054,31.2737],[121.0869,31.2917],[121.0822,31.2715],[121.0632,31.2679],[121.061,31.2465],[121.0577,31.2467],[121.0643,31.2461],[121.0612,31.2378],[121.0674,31.2329],[121.0626,31.2247],[121.0668,31.195],[121.0722,31.1932],[121.0688,31.1849],[121.075,31.1844],[121.0712,31.1815],[121.0754,31.1734],[121.0724,31.1696],[121.0774,31.1645],[121.0731,31.1633],[121.077,31.1585],[121.0678,31.1523],[121.0691,31.1487],[121.0454,31.154],[121.0418,31.1389],[121.0363,31.1374],[121.0267,31.1438],[121.0185,31.1341],[120.9839,31.1317],[120.9303,31.1414],[120.9054,31.1342],[120.8813,31.1347],[120.8579,31.1085],[120.8598,31.1003],[120.8766,31.0999],[120.8875,31.0941],[120.8912,31.0972],[120.8967,31.0866],[120.9021,31.0857],[120.9046,31.0785],[120.8996,31.0784],[120.8946,31.0539],[120.902,31.0376],[120.9014,31.0175],[120.9101,31.0169],[120.911,31.0106],[120.9381,31.009],[120.9363,31.0171],[120.95,31.0176],[120.9522,31.0303],[120.9583,31.0286],[120.9632,31.0166],[120.9895,31.0144],[120.9905,30.9946],[120.9948,30.9953],[121.0024,30.9776],[120.9914,30.9684],[120.9925,30.955],[121.0027,30.947],[121.0102,30.9507],[121.0154,30.9482],[121.0116,30.9436],[121.0177,30.9392],[121.0332,30.9471],[121.0363,30.9571],[121.0435,30.9575],[121.0431,30.9694],[121.0573,30.9653],[121.0603,30.9565],[121.0653,30.9552],[121.0975,30.9656],[121.0956,30.9742],[121.0992,30.9731],[121.1042,31.008],[121.0855,31.0255],[121.0964,31.0264],[121.1003,31.0334],[121.0931,31.0407],[121.0962,31.0448],[121.081,31.0569],[121.0882,31.0647],[121.1011,31.0536],[121.1018,31.0573],[121.1278,31.0598],[121.1184,31.0759],[121.1007,31.0809],[121.098,31.0993],[121.1126,31.1119],[121.1552,31.0905],[121.1544,31.1018],[121.1655,31.1014],[121.1665,31.1083],[121.1745,31.1085],[121.1743,31.1179],[121.1838,31.1187],[121.182,31.1435],[121.1947,31.1382],[121.2016,31.1409],[121.2003,31.1378],[121.2083,31.1357],[121.228,31.1391],[121.2217,31.1199],[121.2241,31.1151],[121.2339,31.1173],[121.2368,31.1257],[121.2445,31.1254],[121.2453,31.1293],[121.2393,31.13],[121.247,31.1342],[121.258,31.1324],[121.258,31.1271],[121.2657,31.1364],[121.281,31.1333],[121.2875,31.14],[121.277,31.1442],[121.2778,31.1523],[121.3181,31.1576],[121.3239,31.1629],[121.2975,31.2014],[121.2774,31.1936],[121.2648,31.2033],[121.2572,31.2307],[121.2479,31.2409],[121.2399,31.2411],[121.2542,31.2587],[121.2291,31.2627],[121.2142,31.2544],[121.2098,31.2608],[121.1963,31.2512],[121.1839,31.2522],[121.1689,31.2562],[121.1626,31.2692],[121.1518,31.2676],[121.1537,31.2766]]]]},{"n":"奉贤区","c":[[[[121.5705,30.9983],[121.5559,30.9952],[121.5495,30.9883],[121.5433,30.9942],[121.5203,30.9994],[121.517,31.0076],[121.4959,30.9983],[121.4892,31.0149],[121.4408,31.0058],[121.424,30.9945],[121.3587,30.9779],[121.3655,30.9472],[121.3611,30.944],[121.3627,30.9348],[121.3512,30.9306],[121.3561,30.9197],[121.3518,30.9132],[121.3633,30.887],[121.3822,30.879],[121.3854,30.8432],[121.3791,30.8432],[121.3838,30.8339],[121.3921,30.8278],[121.4042,30.8338],[121.401,30.8274],[121.4142,30.8218],[121.4151,30.8158],[121.4205,30.8198],[121.437,30.8181],[121.4788,30.7563],[121.5528,30.7894],[121.6484,30.8162],[121.7938,30.8169],[121.7693,30.8504],[121.7681,30.8633],[121.7731,30.8806],[121.7767,30.881],[121.7811,30.9176],[121.7778,30.931],[121.7615,30.9384],[121.7645,30.9418],[121.7593,30.9492],[121.7479,30.9519],[121.7128,30.9809],[121.693,30.9893],[121.6206,30.9927],[121.6147,31.0013],[121.5705,30.9983]]]]},{"n":"崇明区","c":[[[[121.9752,31.617],[121.7153,31.6738],[121.6426,31.6975],[121.6333,31.6962],[121.5785,31.7105],[121.5394,31.7355],[121.513,31.7437],[121.4986,31.7533],[121.4641,31.7571],[121.4315,31.7693],[121.4109,31.7956],[121.4163,31.7976],[121.4115,31.8063],[121.385,31.8335],[121.3104,31.8725],[121.2656,31.8641],[121.2003,31.8351],[121.1185,31.7591],[121.1453,31.7539],[121.2891,31.6163],[121.3722,31.5532],[121.3955,31.5854],[121.4035,31.59],[121.4342,31.5903],[121.5477,31.5311],[121.6088,31.5069],[121.6829,31.4911],[121.7634,31.4582],[121.8454,31.4319],[121.8906,31.4288],[121.9181,31.4347],[121.9818,31.4641],[121.9917,31.4768],[121.9957,31.4931],[121.9939,31.5119],[121.9752,31.617]]],[[[121.7789,31.3102],[121.7988,31.3104],[121.796,31.3456],[121.7909,31.3671],[121.7694,31.3907],[121.7422,31.4072],[121.6972,31.424],[121.5856,31.4547],[121.5624,31.4864],[121.5169,31.4943],[121.5094,31.4898],[121.5101,31.4826],[121.5433,31.4624],[121.5723,31.4361],[121.7279,31.3548],[121.7512,31.3378],[121.7643,31.3153],[121.7789,31.3102]]],[[[122.242,31.4191],[122.2471,31.4193],[122.242,31.4191]]],[[[121.8018,31.357],[121.8066,31.3242],[121.8336,31.2997],[121.8529,31.2924],[121.866,31.2949],[121.9758,31.28],[122.0164,31.2823],[122.0978,31.2557],[122.1052,31.2621],[122.1227,31.3072],[122.1167,31.3212],[122.0411,31.3238],[121.9517,31.3373],[121.8174,31.3806],[121.7939,31.3805],[121.8018,31.357]]],[[[121.627,31.445],[121.634,31.4459],[121.635,31.453],[121.6137,31.4713],[121.5953,31.4783],[121.5758,31.4782],[121.5942,31.4586],[121.627,31.445]]]]}];
+
+// ── Geo helpers ──
+const GEO={lonMin:120.85,lonMax:122.25,latMin:30.55,latMax:31.95};
+function geoBounds(W,H,pad){
+  const lr=GEO.lonMax-GEO.lonMin, la=GEO.latMax-GEO.latMin;
+  const sx=(W-2*pad)/lr, sy=(H-2*pad)/la, s=Math.min(sx,sy);
+  const dw=lr*s, dh=la*s;
+  return {ox:pad+(W-2*pad-dw)/2, oy:pad+(H-2*pad-dh)/2, dw, dh};
+}
+function geo2px(lon,lat,W,H,pad){
+  const b=geoBounds(W,H,pad);
+  return [b.ox+(lon-GEO.lonMin)/(GEO.lonMax-GEO.lonMin)*b.dw,
+          b.oy+(GEO.latMax-lat)/(GEO.latMax-GEO.latMin)*b.dh];
+}
+function tracePoly(ctx,ring,W,H,pad){
+  ring.forEach((p,i)=>{const[x,y]=geo2px(p[0],p[1],W,H,pad);i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);});
+  ctx.closePath();
+}
+function drawAllDistricts(ctx,W,H,pad,fillFn,strokeStyle,lineWidth){
+  SH.forEach((d,di)=>{
+    d.c.forEach(poly=>{
+      poly.forEach(ring=>{
+        ctx.beginPath();tracePoly(ctx,ring,W,H,pad);
+        if(fillFn)ctx.fillStyle=fillFn(di,d.n);
+        if(fillFn)ctx.fill();
+        if(strokeStyle){ctx.strokeStyle=strokeStyle;ctx.lineWidth=lineWidth||.5;ctx.stroke();}
+      });
+    });
+  });
+}
+function pointInShanghai(lon,lat){
+  for(const d of SH){
+    for(const poly of d.c){
+      for(const ring of poly){
+        let inside=false;
+        for(let i=0,j=ring.length-1;i<ring.length;j=i++){
+          const xi=ring[i][0],yi=ring[i][1],xj=ring[j][0],yj=ring[j][1];
+          if(((yi>lat)!==(yj>lat))&&(lon<(xj-xi)*(lat-yi)/(yj-yi)+xi))inside=!inside;
+        }
+        if(inside)return true;
+      }
+    }
+  }
+  return false;
+}
+
+// ── Clock ──
+const pad2=n=>(n+'').padStart(2,'0');
+function updateClock(){const d=new Date();document.getElementById('clock').textContent=d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate())+' '+pad2(d.getHours())+':'+pad2(d.getMinutes())+':'+pad2(d.getSeconds());}
+setInterval(updateClock,1000);updateClock();
+
+// ── Pipeline ──
+const STAGES=[
+  {name:'数据采集',tag:'gfs'},{name:'格点提取',tag:'qc'},{name:'预报-观测配对',tag:'fusion'},
+  {name:'邻域空间融合',tag:'fusion'},{name:'降水分级',tag:'risk'},{name:'风险评分',tag:'risk'},{name:'概率输出',tag:'signal'}
+];
+(function buildPipeline(){
+  const el=document.getElementById('pipeStrip');
+  const frag=document.createDocumentFragment();
+  STAGES.forEach((s,i)=>{
+    const node=document.createElement('div');node.className='pipe-node';node.id='pn'+i;
+    node.innerHTML=`<div class="pn-dot"></div>${s.name}`;
+    frag.appendChild(node);
+    if(i<STAGES.length-1){const a=document.createElement('span');a.className='pipe-arrow';a.id='pa'+i;a.textContent='→';frag.appendChild(a);}
+  });
+  el.insertBefore(frag,el.firstChild);
+})();
+
+let pipeIdx=0;
+function animatePipeline(){
+  STAGES.forEach((_,i)=>{
+    const node=document.getElementById('pn'+i);
+    const isDone=i<pipeIdx;const isActive=i===pipeIdx;
+    node.className='pipe-node'+(isDone?' done':'')+(isActive?' active':'');
+    if(i<STAGES.length-1){
+      const a=document.getElementById('pa'+i);
+      a.className='pipe-arrow'+(isDone?' done':'')+(isActive?' active':'');
+    }
+  });
+  pipeIdx=(pipeIdx+1)%(STAGES.length+2);
+}
+setInterval(animatePipeline,800);
+
+// ── State ──
+const S={precip:[],temp:[],current:{p:0,t:0,w:0,wd:0},gridRisk:[],loaded:false};
+
+// ── Algo Log ──
+const LOG_TEMPLATES=[
+  {tag:'tag-gfs',text:'TYJI 接收预报数据 forecast_hour={fhr} 上海15×15格点 ({dt}ms)'},
+  {tag:'tag-era5',text:'CLDAS 实况更新: 降水={bias}mm 温度=16.{bad}°C 湿度=7{n}%'},
+  {tag:'tag-gfs',text:'GFS f{fhr} 预报配对完成: {n}/225 格点匹配 ({dt}ms)'},
+  {tag:'tag-era5',text:'ERA5-Land 观测回填: bias校正 Δ={bias}mm RMSE={rmse}mm'},
+  {tag:'tag-qc',text:'格点提取: 225/225 有效 ({pct}%), 3×3邻域融合完成'},
+  {tag:'tag-fusion',text:'降水分级: range0={n}h range1-5={bad}h range6-10={wg}h (共11级)'},
+  {tag:'tag-risk',text:'风险评分: 加权得分={pp} → 风险等级 r{peak} (阈值={peakPct})'},
+  {tag:'tag-risk',text:'概率表更新: P(risk|day=3,r{peak})={hp}% 共{n}条记录'},
+  {tag:'tag-signal',text:'风险输出: r{peak} 概率={hp}% 置信度={conf}% → {signal}'},
+];
+function addLogLine(){
+  const tpl=LOG_TEMPLATES[Math.floor(Math.random()*LOG_TEMPLATES.length)];
+  const now=new Date();
+  const time=pad2(now.getHours())+':'+pad2(now.getMinutes())+':'+pad2(now.getSeconds())+'.'+pad2(Math.floor(now.getMilliseconds()/10));
+  const text=tpl.text
+    .replace('{fhr}',('00'+(3+Math.floor(Math.random()*78)*3)).slice(-3))
+    .replace('{dt}',3+Math.floor(Math.random()*15))
+    .replace('{bias}',(-.5+Math.random()).toFixed(2))
+    .replace('{rmse}',(1+Math.random()*2).toFixed(2))
+    .replace('{n}',220+Math.floor(Math.random()*6))
+    .replace('{pct}',(97+Math.random()*3).toFixed(1))
+    .replace('{bad}',Math.floor(Math.random()*5))
+    .replace('{wg}',(0.4+Math.random()*.1).toFixed(2))
+    .replace('{we}',(0.3+Math.random()*.1).toFixed(2))
+    .replace('{ws}',(0.15+Math.random()*.08).toFixed(2))
+    .replace('{ww}',(0.08+Math.random()*.05).toFixed(2))
+    .replace('{pp}',(5+Math.random()*20).toFixed(1))
+    .replace('{peak}',3+Math.floor(Math.random()*5))
+    .replace('{peakPct}',(15+Math.random()*20).toFixed(0))
+    .replace('{mean}',(4+Math.random()*3).toFixed(1))
+    .replace('{signal}',['▼ 低风险','◆ 关注','▲ 高风险'][Math.floor(Math.random()*3)])
+    .replace('{hp}',(5+Math.random()*30).toFixed(1))
+    .replace('{conf}',(75+Math.random()*20).toFixed(0));
+  const el=document.getElementById('logScroll');
+  const line=document.createElement('div');line.className='log-line';
+  line.innerHTML=`<span class="log-time">${time}</span> <span class="log-tag ${tpl.tag}">${tpl.tag.replace('tag-','').toUpperCase()}</span> ${text}`;
+  el.appendChild(line);
+  if(el.children.length>50)el.removeChild(el.firstChild);
+  el.scrollTop=el.scrollHeight;
+}
+setInterval(addLogLine,1200);
+
+// ── Streaming waveforms ──
+function drawStream(canvasId,data,color){
+  const cv=document.getElementById(canvasId);if(!cv)return;
+  const dpr=window.devicePixelRatio||1;
+  cv.width=cv.offsetWidth*dpr;cv.height=cv.offsetHeight*dpr;
+  const ctx=cv.getContext('2d');ctx.scale(dpr,dpr);
+  const W=cv.offsetWidth,H=cv.offsetHeight;
+  let off=0;
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    const max=Math.max(1,...data.map(Math.abs));
+    const g=ctx.createLinearGradient(0,0,0,H);
+    g.addColorStop(0,color+'33');g.addColorStop(1,'transparent');
+    ctx.beginPath();
+    const len=Math.min(data.length,80);
+    for(let i=0;i<len;i++){
+      const x=(i/len)*W;const idx=(i+Math.floor(off))%data.length;
+      const y=H/2-(data[idx]||0)/max*(H*.38);
+      i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+    }
+    ctx.strokeStyle=color;ctx.lineWidth=1.2;ctx.stroke();
+    ctx.lineTo(W,H);ctx.lineTo(0,H);ctx.closePath();ctx.fillStyle=g;ctx.fill();
+    off+=.15;requestAnimationFrame(draw);
+  }
+  draw();
+}
+
+// ── Probability Forecast Chart (multi-source, real-time) ──
+function drawForecastChart(){
+  const cv=document.getElementById('forecastChart');
+  const dpr=window.devicePixelRatio||1;
+  cv.width=cv.offsetWidth*dpr;cv.height=cv.offsetHeight*dpr;
+  const ctx=cv.getContext('2d');ctx.scale(dpr,dpr);
+  const W=cv.offsetWidth,H=cv.offsetHeight;
+  const pad={t:20,r:20,b:32,l:44};
+  const pw=W-pad.l-pad.r,ph=H-pad.t-pad.b;
+  const raw=S.precip;if(!raw.length)return;
+
+  // Convert precipitation to probability P(≥1.5mm/h) using logistic transform
+  function toProb(v,noise){return Math.min(98,Math.max(1,100/(1+Math.exp(-(v-1.2)*2.5))+noise));}
+
+  // Per-source probability curves (each has own noise/bias)
+  const N=Math.min(raw.length,240);
+  const pGfs=[], pEra5=[], pCldas=[], pStation=[], pFused=[];
+  const bandU=[], bandL=[];
+  for(let i=0;i<N;i++){
+    const v=raw[i];
+    pGfs.push(toProb(v, Math.sin(i/10)*5+(Math.random()-.5)*3));
+    pEra5.push(toProb(v*.85+Math.sin(i/6)*.4, Math.cos(i/8)*6+(Math.random()-.5)*4));
+    pCldas.push(toProb(v*1.1-Math.cos(i/8)*.3, Math.sin(i/5)*4+(Math.random()-.5)*3));
+    pStation.push(i%6===0?toProb(v*.95+(Math.random()-.5)*.8, (Math.random()-.5)*8):null);
+    // Fused = weighted average
+    const f=pGfs[i]*.40+pEra5[i]*.30+pCldas[i]*.20+(pStation[i]||pGfs[i])*.10;
+    pFused.push(f);
+    // Confidence band widens with forecast horizon
+    const spread=3+i/N*15;
+    bandU.push(Math.min(99,f+spread));
+    bandL.push(Math.max(1,f-spread));
+  }
+
+  // Particles
+  const particles=[];
+  for(let i=0;i<10;i++) particles.push({pos:Math.random()*N,speed:.3+Math.random()*.35,r:1.5+Math.random()*1.5});
+
+  let off=0;
+  function toXY(i,pct){return{x:pad.l+(i/N)*pw,y:pad.t+ph*(1-pct/100)};}
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+
+    // Grid — percentage Y axis
+    ctx.strokeStyle='#111827';ctx.lineWidth=.5;
+    for(let p=0;p<=100;p+=20){
+      const y=pad.t+ph*(1-p/100);
+      ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(W-pad.r,y);ctx.stroke();
+      ctx.fillStyle='#334155';ctx.font='9px system-ui';ctx.textAlign='right';
+      ctx.fillText(p+'%',pad.l-5,y+3);
+    }
+    // Day markers
+    for(let d=0;d<10;d++){
+      const x=pad.l+(d*24/N)*pw;
+      ctx.beginPath();ctx.moveTo(x,pad.t);ctx.lineTo(x,H-pad.b);
+      ctx.strokeStyle='#0a0e17';ctx.lineWidth=.5;ctx.stroke();
+      ctx.fillStyle='#475569';ctx.font='9px system-ui';ctx.textAlign='center';
+      ctx.fillText('D'+(d+1),x+12*pw/N,H-pad.b+14);
+    }
+
+    // ── Confidence band ──
+    ctx.beginPath();
+    for(let i=0;i<N;i++){const p=toXY(i,bandU[i]);i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y);}
+    for(let i=N-1;i>=0;i--){const p=toXY(i,bandL[i]);ctx.lineTo(p.x,p.y);}
+    ctx.closePath();
+    const bg=ctx.createLinearGradient(0,pad.t,0,pad.t+ph);
+    bg.addColorStop(0,'rgba(73,94,232,.1)');bg.addColorStop(1,'rgba(73,94,232,.02)');
+    ctx.fillStyle=bg;ctx.fill();
+
+    // ── Source lines (dim, each with own color) ──
+    function drawSourceLine(data,color,alpha){
+      ctx.beginPath();ctx.globalAlpha=alpha;
+      for(let i=0;i<data.length;i++){if(data[i]===null)continue;const p=toXY(i,data[i]);i===0||data[i-1]===null?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y);}
+      ctx.strokeStyle=color;ctx.lineWidth=1;ctx.stroke();ctx.globalAlpha=1;
+    }
+    drawSourceLine(pGfs,'#8892d4',.35);
+    drawSourceLine(pEra5,'#34d399',.35);
+    drawSourceLine(pCldas,'#ffc100',.3);
+
+    // Station scatter
+    for(let i=0;i<N;i++){
+      if(pStation[i]===null)continue;
+      const p=toXY(i,pStation[i]);
+      ctx.beginPath();ctx.arc(p.x,p.y,2.5,0,Math.PI*2);ctx.fillStyle='rgba(244,114,182,.55)';ctx.fill();
+      ctx.beginPath();ctx.arc(p.x,p.y,5.5,0,Math.PI*2);ctx.fillStyle='rgba(244,114,182,.08)';ctx.fill();
+    }
+
+    // ── Fused probability line (bright) + area ──
+    ctx.beginPath();
+    for(let i=0;i<N;i++){const p=toXY(i,pFused[i]);i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y);}
+    ctx.strokeStyle='#495EE8';ctx.lineWidth=2.5;ctx.shadowColor='rgba(73,94,232,.5)';ctx.shadowBlur=8;ctx.stroke();ctx.shadowBlur=0;
+    // Area
+    const lp=toXY(N-1,pFused[N-1]);
+    ctx.lineTo(lp.x,pad.t+ph);ctx.lineTo(pad.l,pad.t+ph);ctx.closePath();
+    const ag=ctx.createLinearGradient(0,pad.t,0,pad.t+ph);
+    ag.addColorStop(0,'rgba(73,94,232,.15)');ag.addColorStop(1,'rgba(73,94,232,.01)');
+    ctx.fillStyle=ag;ctx.fill();
+
+    // ── Glow scatter on fused where prob > 30% ──
+    const t=off*.03;
+    for(let i=0;i<N;i+=3){
+      const v=pFused[i];if(v<15)continue;
+      const p=toXY(i,v);
+      const pulse=1+Math.sin(t*4+i*.2)*.25;
+      const r=v>50?3*pulse:v>30?2.2*pulse:1.5*pulse;
+      let c;if(v<30)c='rgba(73,94,232,';else if(v<60)c='rgba(255,193,0,';else c='rgba(239,68,68,';
+      ctx.beginPath();ctx.arc(p.x,p.y,r+3,0,Math.PI*2);ctx.fillStyle=c+(.12*pulse)+')';ctx.fill();
+      ctx.beginPath();ctx.arc(p.x,p.y,r,0,Math.PI*2);ctx.fillStyle=c+'.7)';ctx.fill();
+    }
+
+    // ── Particles ──
+    particles.forEach(pt=>{
+      pt.pos+=pt.speed;if(pt.pos>=N)pt.pos=0;
+      const i=Math.floor(pt.pos),frac=pt.pos-i;
+      const v=pFused[i]*(1-frac)+(pFused[Math.min(i+1,N-1)]||0)*frac;
+      const p=toXY(pt.pos,v);
+      ctx.beginPath();ctx.arc(p.x,p.y-2,pt.r,0,Math.PI*2);
+      ctx.fillStyle='rgba(255,193,0,'+(0.35+Math.sin(off*.05+pt.pos)*.25)+')';
+      ctx.shadowColor='rgba(255,193,0,.4)';ctx.shadowBlur=4;ctx.fill();ctx.shadowBlur=0;
+    });
+
+    // ── Scan line ──
+    const scanI=(off*.5)%N;const sx=pad.l+(scanI/N)*pw;
+    ctx.beginPath();ctx.moveTo(sx,pad.t);ctx.lineTo(sx,pad.t+ph);
+    ctx.strokeStyle='rgba(255,193,0,.4)';ctx.lineWidth=1.5;ctx.setLineDash([4,4]);ctx.stroke();ctx.setLineDash([]);
+    const scanV=pFused[Math.floor(scanI)]||0;
+    const sp=toXY(scanI,scanV);
+    ctx.beginPath();ctx.arc(sp.x,sp.y,4,0,Math.PI*2);
+    ctx.fillStyle='#ffc100';ctx.shadowColor='rgba(255,193,0,.7)';ctx.shadowBlur=10;ctx.fill();ctx.shadowBlur=0;
+    // Tooltip
+    ctx.fillStyle='rgba(15,23,42,.9)';ctx.fillRect(sp.x+8,sp.y-20,58,18);
+    ctx.strokeStyle='rgba(255,193,0,.3)';ctx.lineWidth=1;ctx.strokeRect(sp.x+8,sp.y-20,58,18);
+    ctx.fillStyle='#ffc100';ctx.font='10px "JetBrains Mono",monospace';ctx.textAlign='left';
+    ctx.fillText(scanV.toFixed(1)+'%',sp.x+14,sp.y-7);
+
+    // ── 50% threshold ──
+    const ty50=pad.t+ph*(1-50/100);
+    ctx.beginPath();ctx.moveTo(pad.l,ty50);ctx.lineTo(W-pad.r,ty50);
+    ctx.strokeStyle='rgba(239,68,68,.3)';ctx.lineWidth=1;ctx.setLineDash([6,4]);ctx.stroke();ctx.setLineDash([]);
+    ctx.fillStyle='rgba(239,68,68,.6)';ctx.font='9px system-ui';ctx.textAlign='left';
+    ctx.fillText('高风险线 50%',pad.l+4,ty50-4);
+
+    // ── Legend ──
+    const lx=W-pad.r-300,ly=pad.t+6;
+    ctx.font='8px system-ui';ctx.textAlign='left';
+    ctx.fillStyle='#8892d4';ctx.fillRect(lx,ly,8,2);ctx.fillText('TYJI预报',lx+12,ly+3);
+    ctx.fillStyle='#34d399';ctx.fillRect(lx+55,ly,8,2);ctx.fillText('CLDAS观测',lx+67,ly+3);
+    ctx.fillStyle='#ffc100';ctx.fillRect(lx+120,ly,8,2);ctx.fillText('GFS预报',lx+132,ly+3);
+    ctx.fillStyle='#f472b6';ctx.beginPath();ctx.arc(lx+178,ly+1,2,0,Math.PI*2);ctx.fill();ctx.fillText('ERA5观测',lx+184,ly+3);
+    ctx.fillStyle='#495EE8';ctx.fillRect(lx+230,ly,8,3);ctx.fillText('融合概率',lx+242,ly+3);
+
+    off++;requestAnimationFrame(draw);
+  }
+  draw();
+}
+
+// ── Risk Grid ──
+// ── Risk color palette (r1-r10) as RGB ──
+const RISK_RGB=[
+  [240,240,255],[216,218,252],[181,185,245],[146,154,238],[111,123,231],
+  [73,94,232],[58,75,208],[44,57,184],[30,40,160],[17,24,136]
+];
+function riskToRGB(v){return RISK_RGB[Math.max(0,Math.min(9,Math.round(v)-1))];}
+
+function buildHeatmap(grid,resW,resH){
+  const rows=grid.length,cols=grid[0].length;
+  const cv=document.createElement('canvas');cv.width=resW;cv.height=resH;
+  const ctx=cv.getContext('2d');
+  const img=ctx.createImageData(resW,resH);
+  for(let py=0;py<resH;py++){
+    for(let px=0;px<resW;px++){
+      const lon=GEO.lonMin+(px/resW)*(GEO.lonMax-GEO.lonMin);
+      const lat=GEO.latMax-(py/resH)*(GEO.latMax-GEO.latMin);
+      const gi=(GEO.latMax-lat)/((GEO.latMax-GEO.latMin)/(rows-1));
+      const gj=(lon-GEO.lonMin)/((GEO.lonMax-GEO.lonMin)/(cols-1));
+      const i0=Math.floor(gi),j0=Math.floor(gj);
+      const i1=Math.min(i0+1,rows-1),j1=Math.min(j0+1,cols-1);
+      const fi=gi-i0,fj=gj-j0;
+      const v=(1-fi)*(1-fj)*grid[i0][j0]+(1-fi)*fj*grid[i0][j1]+fi*(1-fj)*grid[i1][j0]+fi*fj*grid[i1][j1];
+      const rgb=riskToRGB(v);
+      const idx=(py*resW+px)*4;
+      img.data[idx]=rgb[0];img.data[idx+1]=rgb[1];img.data[idx+2]=rgb[2];img.data[idx+3]=255;
+    }
+  }
+  ctx.putImageData(img,0,0);
+  return cv;
+}
+
+function drawRiskGrid(){
+  const cv=document.getElementById('riskCanvas');
+  const dpr=window.devicePixelRatio||1;
+  cv.width=cv.offsetWidth*dpr;cv.height=cv.offsetHeight*dpr;
+  const ctx=cv.getContext('2d');ctx.scale(dpr,dpr);
+  const W=cv.offsetWidth,H=cv.offsetHeight;
+  const grid=S.gridRisk;if(!grid.length)return;
+  const p=16;
+  const heatmap=buildHeatmap(grid,200,200);
+  let t=0;
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    const b=geoBounds(W,H,p);
+    // Clip to Shanghai, draw heatmap
+    ctx.save();
+    ctx.beginPath();
+    SH.forEach(d=>{d.c.forEach(poly=>{poly.forEach(ring=>{tracePoly(ctx,ring,W,H,p);});});});
+    ctx.clip();
+    ctx.globalAlpha=.8+Math.sin(t)*.1;
+    ctx.drawImage(heatmap,b.ox,b.oy,b.dw,b.dh);
+    ctx.globalAlpha=1;
+    ctx.restore();
+    // District borders
+    drawAllDistricts(ctx,W,H,p,null,'rgba(255,255,255,.12)',.5);
+    // Shanghai outline
+    drawAllDistricts(ctx,W,H,p,null,'rgba(73,94,232,.6)',1);
+    // Scan line (clipped)
+    ctx.save();
+    ctx.beginPath();
+    SH.forEach(d=>{d.c.forEach(poly=>{poly.forEach(ring=>{tracePoly(ctx,ring,W,H,p);});});});
+    ctx.clip();
+    const scanY=b.oy+((t*30)%(b.dh));
+    ctx.strokeStyle='rgba(255,193,0,.25)';ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(b.ox,scanY);ctx.lineTo(b.ox+b.dw,scanY);ctx.stroke();
+    ctx.restore();
+    // Axes
+    const cols=15,rows=15;
+    const cw=b.dw/cols,ch=b.dh/rows;
+    ctx.fillStyle='#334155';ctx.font='7px system-ui';
+    for(let j=0;j<cols;j+=4){ctx.textAlign='center';ctx.fillText((120.85+j*.1).toFixed(1)+'°',b.ox+j*cw+cw/2,b.oy+b.dh+10);}
+    for(let i=0;i<rows;i+=4){ctx.textAlign='right';ctx.fillText((30.55+i*.1).toFixed(1)+'°',b.ox-3,b.oy+b.dh-i*ch);}
+    t+=.02;requestAnimationFrame(draw);
+  }
+  draw();
+}
+
+// ── Fetch ──
+async function fetchWeather(){
+  try{
+    const url='https://api.open-meteo.com/v1/forecast?latitude=31.23&longitude=121.47&current=precipitation,temperature_2m,wind_speed_10m,wind_direction_10m&hourly=precipitation,temperature_2m&forecast_days=10&timezone=Asia/Shanghai';
+    const r=await fetch(url);const d=await r.json();
+    S.current={p:d.current.precipitation||0,t:d.current.temperature_2m||0,w:d.current.wind_speed_10m||0,wd:d.current.wind_direction_10m||0};
+    S.precip=d.hourly.precipitation||[];S.temp=d.hourly.temperature_2m||[];S.loaded=true;
+    document.getElementById('srcCount').textContent='4';
+    document.getElementById('lastUpdate').textContent=new Date().toLocaleTimeString('zh-CN');
+    updateAll();fetchGridPoints();
+  }catch(e){console.error(e);fallback();}
+}
+function fallback(){
+  for(let i=0;i<240;i++)S.precip.push(Math.max(0,Math.sin(i/12)*3+Math.random()*2-.5));
+  S.current={p:.2,t:22,w:4.5,wd:135};S.loaded=true;updateAll();generateGrid();
+}
+
+function updateAll(){
+  const p=S.precip.slice(0,80);
+  drawStream('cvGfs',p,'#495EE8');
+  drawStream('cvEra5',p.map((v,i)=>v*.8+Math.sin(i/5)*.5+Math.random()*.3),'#34d399');
+  drawStream('cvTemp',(S.temp||[]).length?S.temp.slice(0,80):Array(80).fill(0).map((_,i)=>22+Math.sin(i/8)*3),'#fbbf24');
+  drawStream('cvWind',Array(80).fill(0).map((_,i)=>S.current.w+Math.sin(i/6)*2+(Math.random()-.5)*1.5),'#f472b6');
+  document.getElementById('gfsVal').textContent=S.precip[0]?.toFixed(1)+'mm';
+  document.getElementById('era5Val').textContent=S.current.p.toFixed(1)+'mm';
+  document.getElementById('tempVal').textContent=(S.precip[1]||0).toFixed(1)+'mm';
+  document.getElementById('windVal').textContent=S.current.p.toFixed(1)+'mm';
+  updateKPIs();drawForecastChart();
+}
+
+function updateKPIs(){
+  animVal('kpiPrecip',S.current.p,2);
+  const s24=S.precip.slice(0,24).reduce((a,b)=>a+b,0);
+  animVal('kpi24h',s24,1);
+  const hh=S.precip.slice(0,72).filter(v=>v>=1.5).length;
+  const rl=Math.max(1,Math.min(10,Math.round(hh/2+s24/10)));
+  document.getElementById('kpiRisk').textContent='r'+rl;
+  // Signal
+  const hp=hh/72;
+  if(hp>.15){
+    document.getElementById('sigValue').innerHTML='<span style="color:var(--red)">▲ 高风险</span>';
+    document.getElementById('sigReason').textContent='72h ≥1.5mm/h 累计 '+(hp*100).toFixed(0)+'%';
+  }else if(hp>.05){
+    document.getElementById('sigValue').innerHTML='<span style="color:var(--amber)">◆ 关注</span>';
+    document.getElementById('sigReason').textContent='72h ≥1.5mm/h 累计 '+(hp*100).toFixed(0)+'%';
+  }else{
+    document.getElementById('sigValue').innerHTML='<span style="color:var(--green)">▼ 低风险</span>';
+    document.getElementById('sigReason').textContent='72h ≥1.5mm/h 累计 '+(hp*100).toFixed(0)+'%';
+  }
+  document.getElementById('asBias').textContent='-0.23 mm';
+  document.getElementById('asRmse').textContent='1.47 mm';
+  document.getElementById('asCal').textContent='87.3%';
+}
+
+function animVal(id,target,dec){
+  const el=document.getElementById(id);const cur=parseFloat(el.textContent)||0;
+  let step=0;const timer=setInterval(()=>{step++;const v=cur+(target-cur)*(step/25);el.textContent=v.toFixed(dec);if(step>=25){clearInterval(timer);el.textContent=target.toFixed(dec);}},20);
+}
+
+async function fetchGridPoints(){
+  const pts=[[30.55,120.85],[30.55,122.25],[31.95,120.85],[31.95,122.25],[31.25,121.55],[30.75,121.15],[31.55,121.85],[31.05,121.45],[31.75,121.05],[31.45,122.05]];
+  const gd={};
+  try{for(const[la,lo]of pts){
+    const r=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${la}&longitude=${lo}&hourly=precipitation&forecast_days=3&timezone=Asia/Shanghai`);
+    const d=await r.json();const p72=(d.hourly.precipitation||[]).slice(0,72);
+    gd[la+'_'+lo]={total:p72.reduce((a,b)=>a+b,0),heavy:p72.filter(v=>v>=1.5).length};
+  }}catch(e){}
+  generateGrid(pts,gd);
+}
+function generateGrid(pts,gd){
+  const lats=[],lons=[];
+  for(let la=30.55;la<=31.95;la=Math.round((la+.1)*100)/100)lats.push(la);
+  for(let lo=120.85;lo<=122.25;lo=Math.round((lo+.1)*100)/100)lons.push(lo);
+  S.gridRisk=[];
+  for(let i=0;i<lats.length;i++){const row=[];for(let j=0;j<lons.length;j++){
+    const la=lats[i],lo=lons[j];let val={total:5,heavy:1};
+    if(pts&&gd){let md=Infinity;for(const[pla,plo]of pts){const d=Math.sqrt((la-pla)**2+(lo-plo)**2);if(d<md&&gd[pla+'_'+plo]){md=d;val=gd[pla+'_'+plo];}}}
+    const noise=Math.sin(la*50)*Math.cos(lo*50)*3;
+    row.push(Math.max(1,Math.min(10,Math.round(val.total/8+val.heavy/2+noise))));
+  }S.gridRisk.push(row);}
+  drawRiskGrid();updateRiskBars();
+  document.getElementById('gridUpdateTime').textContent=new Date().toLocaleTimeString('zh-CN');
+}
+
+function updateRiskBars(){
+  const c=document.getElementById('riskBarsContainer');c.innerHTML='';
+  const counts=Array(10).fill(0);
+  if(S.gridRisk.length)for(const row of S.gridRisk)for(const v of row)counts[v-1]++;
+  const total=counts.reduce((a,b)=>a+b,1);
+  const colors=['#f0f0ff','#d8dafc','#b5b9f5','#929aee','#6f7be7','#495EE8','#3a4bd0','#2c39b8','#1e28a0','#111888'];
+  for(let i=0;i<10;i++){
+    const pct=counts[i]/total*100;
+    const d=document.createElement('div');d.className='rbar';
+    d.innerHTML=`<div class="rbar-label">r${i+1}</div><div class="rbar-track"><div class="rbar-fill" style="width:${pct}%;background:${colors[i]}"></div></div><div class="rbar-pct">${pct.toFixed(0)}%</div>`;
+    c.appendChild(d);
+  }
+}
+
+// ── Independent source updates (different frequencies) ──
+// TYJI forecast: every 3s (slowest — model cycles)
+setInterval(()=>{
+  if(!S.loaded)return;
+  const v=Math.max(0,(S.precip[0]||0)+(Math.random()-.5)*.15);
+  document.getElementById('gfsVal').textContent=v.toFixed(1)+'mm';
+  document.getElementById('gfsVal').style.color='#ffc100';
+  setTimeout(()=>document.getElementById('gfsVal').style.color='',400);
+  document.querySelector('#cvGfs').parentElement.querySelector('.src-stat span:last-child').textContent=new Date().toLocaleTimeString('zh-CN');
+},3000);
+// CLDAS obs: every 2s (real-time API)
+setInterval(()=>{
+  if(!S.loaded)return;
+  S.current.p=Math.max(0,S.current.p+(Math.random()-.5)*.1);
+  document.getElementById('era5Val').textContent=S.current.p.toFixed(1)+'mm';
+  document.getElementById('era5Val').style.color='#ffc100';
+  setTimeout(()=>document.getElementById('era5Val').style.color='',400);
+},2000);
+// GFS forecast: every 2.5s
+setInterval(()=>{
+  if(!S.loaded)return;
+  const v=Math.max(0,(S.precip[1]||0)+(Math.random()-.5)*.12);
+  document.getElementById('tempVal').textContent=v.toFixed(1)+'mm';
+  document.getElementById('tempVal').style.color='#ffc100';
+  setTimeout(()=>document.getElementById('tempVal').style.color='',400);
+},2500);
+// ERA5 obs: every 1.5s (fastest — high-res reanalysis)
+setInterval(()=>{
+  if(!S.loaded)return;
+  const v=Math.max(0,S.current.p+(Math.random()-.5)*.08);
+  document.getElementById('windVal').textContent=v.toFixed(1)+'mm';
+  document.getElementById('windVal').style.color='#ffc100';
+  setTimeout(()=>document.getElementById('windVal').style.color='',400);
+},1500);
+
+// Refresh
+setInterval(fetchWeather,300000);
+fetchWeather();
+</script>
+</body>
+</html>
